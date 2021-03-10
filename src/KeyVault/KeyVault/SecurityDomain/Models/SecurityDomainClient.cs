@@ -129,7 +129,7 @@ namespace Microsoft.Azure.Commands.KeyVault.SecurityDomain.Models
         private string PollAsyncOperation(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             HttpResponseMessage _response = null;
-            var responseContent = string.Empty;
+            string firstResponseContent;
             try
             {
                 _writeDebug(GeneralUtilities.GetLog(request));
@@ -142,16 +142,10 @@ namespace Microsoft.Azure.Commands.KeyVault.SecurityDomain.Models
                 }
 
 
-                // and let's look at the current response body and see if we have some information we can give back to the listener
-                var content = _response.Content.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-                if (string.IsNullOrEmpty(JsonConvert.DeserializeObject<PollingResult>(content).Status)) {
-                    // if response body of first request does not contain "status"
-                    // it means it's still a **sync** operation
-                    return content;
-                }
+                // cache first response, and start polling until a terminal state
+                firstResponseContent = _response.Content.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
 
                 var asyncOperation = string.Empty;
-                // while (request.Method == System.Net.Http.HttpMethod.Put && _response.StatusCode == global::System.Net.HttpStatusCode.OK || _response.StatusCode == global::System.Net.HttpStatusCode.Created || _response.StatusCode == global::System.Net.HttpStatusCode.Accepted)
                 while (true)
                 {
                     // get the delay before polling. (default to 30 seconds if not present)
@@ -184,10 +178,11 @@ namespace Microsoft.Azure.Commands.KeyVault.SecurityDomain.Models
 
                     // take a peek inside and see if it's done
                     var error = false;
+                    string pollingResponseContent;
                     try
                     {
-                        responseContent = _response.Content.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-                        var result = JsonConvert.DeserializeObject<PollingResult>(responseContent);
+                        pollingResponseContent = _response.Content.ReadAsStringAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+                        var result = JsonConvert.DeserializeObject<PollingResult>(pollingResponseContent);
                         if (result != null)
                         {
                             var state = result.Status;
@@ -204,8 +199,9 @@ namespace Microsoft.Azure.Commands.KeyVault.SecurityDomain.Models
                                     error = true;
                                     break;
                                 case "succeeded":
+                                case "success":
                                     // we're done polling.
-                                    return responseContent;
+                                    return firstResponseContent;
                                 default:
                                     // need to keep polling!
                                     continue;
@@ -220,11 +216,11 @@ namespace Microsoft.Azure.Commands.KeyVault.SecurityDomain.Models
 
                     if (error)
                     {
-                        throw new Exception(responseContent);
+                        throw new Exception(firstResponseContent);
                     }
                 }
 
-                return responseContent;
+                return firstResponseContent;
             }
             finally
             {
